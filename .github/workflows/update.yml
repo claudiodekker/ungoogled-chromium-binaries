@@ -1,0 +1,126 @@
+name: Create PR for new release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 'master'
+
+      - name: Check for existing release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            
+            function parseHashesFromRelease(input) {
+              const parsed = {}
+            
+              const regex = /disk image `(?<name>ungoogled-chromium_.*)`: \n\n```\nmd5: (?<md5>.*)\nsha1: (?<sha1>.*)\nsha256: (?<sha256>.*)\n```/g
+              let m = []
+            
+              while ((m = regex.exec(input)) !== null) {
+                if (m.index === regex.lastIndex) {
+                  regex.lastIndex++
+                }
+            
+                const { name, ...hashes } = m.groups
+                parsed[name] = hashes
+              }
+            
+              return parsed
+            }
+            
+            function parseFilePathFromName(name) {
+              const matches = /^ungoogled-chromium_(?<chromium_version>.*)-(?<ungoogled_revision>.*)\.(?<package_revision>.*)_(?<cpu>.*)-macos-signed\.dmg$/.exec(name)
+              if (! matches) {
+                return null
+              }
+            
+              let { chromium_version, ungoogled_revision, cpu } = matches.groups
+                
+              if (cpu === "x86-64") {
+                cpu = "x86_64"
+              }
+                
+              return `config/platforms/macos/${cpu}/${chromium_version}-${ungoogled_revision}.ini`
+            }
+            
+            const getReleaseForTag = async (tag) => {
+              const releases = await github.rest.repos.listReleases({
+                owner: context.repo.owner,
+                repo: 'ungoogled-chromium-macos',
+              })
+            
+              return releases.data.find(release => release.tag_name === tag)
+            }
+            
+            const release = await getReleaseForTag("${{ inputs.tag }}")
+            if (! release) {
+              core.setFailed("Could not find release for tag ${{ inputs.tag }}")
+              return null
+            }
+            
+            const hashes = parseHashesFromRelease(release.body)
+            
+            let metadata = "[_metadata]\n"
+            metadata += "publication_time = " + release.published_at + "\n"
+            metadata += "github_author = github-actions\n"
+            metadata += "note = Automated code-signed/notarized builds of ungoogled-chromium for macOS.\n"
+            
+            release.assets.forEach(asset => {
+              let payload = metadata
+            
+              const { name, browser_download_url } = asset
+              const { md5, sha1, sha256 } = hashes[name]
+            
+              payload += `\n[${name}]\n`
+              payload += `url = ${browser_download_url}\n`
+              payload += `md5 = ${md5}\n`
+              payload += `sha1 = ${sha1}\n`
+              payload += `sha256 = ${sha256}\n`
+
+              const filePath = parseFilePathFromName(name)
+              if (filePath == null) {
+                core.setFailed("Could not parse file path from name: " + name)
+                return null
+              }
+
+              fs.writeFileSync(parseFilePathFromName(name), payload + "\n")
+            })
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: "${{ inputs.tag }}-macos"
+          commit_message: "Add signed macOS builds of ${{ inputs.tag }}"
+          create_branch: true
+          file_pattern: "config/platforms/macos/**/*.ini"
+
+      - name: Create Pull Request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.UNGOOGLED_CHROMIUM_BINARIES_PAT }}
+          script: |
+            _gh_run_href="https://github.com/" + context.repo.owner + "/" + context.repo.repo + "/actions/runs/" + context.runId
+            
+            await github.rest.pulls.create({
+              owner: 'ungoogled-software',
+              repo: 'ungoogled-chromium-binaries',
+              title: 'Add signed macOS builds of ${{ inputs.tag }}',
+              head: context.repo.owner + ':${{ inputs.tag }}-macos',
+              base: 'master',
+              body: `This PR was [automatically triggered](${_gh_run_href}) by the release of [code-signed build ${{ inputs.tag }}](https://github.com/${context.repo.owner}/ungoogled-chromium-macos/releases/tag/${{ inputs.tag }}) of ungoogled-chromium for macOS, which itself is based on [this ungoogled-software/ungoogled-chromium-macos build](https://github.com/ungoogled-software/ungoogled-chromium-macos/releases/tag/${{ inputs.tag }}).`
+            })
