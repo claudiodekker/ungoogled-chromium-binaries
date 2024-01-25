@@ -19,7 +19,7 @@ jobs:
         with:
           ref: 'master'
 
-      - name: Check for existing release
+      - name: Generate release files
         uses: actions/github-script@v7
         with:
           script: |
@@ -76,7 +76,7 @@ jobs:
             const hashes = parseHashesFromRelease(release.body)
             
             let metadata = "[_metadata]\n"
-            metadata += "publication_time = " + release.published_at + "\n"
+            metadata += "publication_time = " + release.published_at.replace("Z", ".000000") + "\n"
             metadata += "github_author = github-actions\n"
             metadata += "note = Automated code-signed/notarized builds of ungoogled-chromium for macOS.\n"
             
@@ -98,7 +98,7 @@ jobs:
                 return null
               }
 
-              fs.writeFileSync(parseFilePathFromName(name), payload + "\n")
+              fs.writeFileSync(parseFilePathFromName(name), payload)
             })
 
       - name: Commit changes
