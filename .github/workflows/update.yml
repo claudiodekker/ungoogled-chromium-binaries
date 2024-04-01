@@ -77,7 +77,7 @@ jobs:
             
             let metadata = "[_metadata]\n"
             metadata += "publication_time = " + release.published_at.replace("Z", ".000000") + "\n"
-            metadata += "github_author = github-actions\n"
+            metadata += "github_author = claudiodekker\n"
             metadata += "note = Automated code-signed/notarized builds of ungoogled-chromium for macOS.\n"
             
             release.assets.forEach(asset => {
